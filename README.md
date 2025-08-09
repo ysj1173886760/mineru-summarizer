@@ -234,6 +234,12 @@ export DEBUG=1
 - **章节大小**: 调整 `max_tokens_per_chapter` 平衡质量和速度
 - **检查点**: 长文档建议启用 `enable_checkpoint`
 
+## TODO(sheep):
+
+- [] 删除无效代码，只保留mineru-summarizer的代码
+- [] 不依赖mineru的输出格式，只使用md文件做切片+翻译
+- [] 图片上传到oss中，并生成图片链接
+
 ## 🤝 贡献
 
 欢迎提交Issues和Pull Requests来改进工具！
