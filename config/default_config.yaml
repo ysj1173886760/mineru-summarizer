@@ -1,0 +1,42 @@
+llm:
+  provider: "openai"    # openai, anthropic, local
+  model: "google/gemini-2.5-pro"
+  api_key: "${OPENAI_API_KEY}"
+  temperature: 0.3
+  max_tokens: 4000
+  base_url: "${OPENAI_BASE_URL}"        # for local models
+
+processing:
+  chunk_size: 3000      # 分块大小（字符数）
+  overlap: 200          # 重叠字符数
+  preserve_structure: true
+  include_images: true
+  max_concurrent: 3     # 最大并发请求数
+
+output:
+  format: "markdown"
+  language: "zh-CN"
+  include_toc: true
+  image_path_prefix: "./images/"
+
+compression_levels:
+  100:
+    strategy: "translate"
+    detail_level: "full"
+    prompt_template: "请将以下英文学术文本完整地翻译成中文，保持原有的学术风格和专业术语的准确性。如果原文中有图片链接（格式如![](images/xxx.jpg)），请在翻译中保留这些图片链接："
+  70:
+    strategy: "detailed_summary"
+    detail_level: "high"
+    prompt_template: "请对以下英文学术文本进行详细的中文总结，保留70%的信息量，包含主要论点、方法和结果。要求：1) 直接输出总结内容，不要添加关于总结过程的说明性文字；2) 如果原文中有图片链接（格式如![](images/xxx.jpg)），请在总结中保留这些图片链接，如果文中有对图片的相关描述可以简要提及："
+  50:
+    strategy: "standard_summary"  
+    detail_level: "medium"
+    prompt_template: "请对以下英文学术文本进行中文总结，保留50%的信息量，重点关注核心观点和主要发现。要求：1) 直接输出总结内容，不要添加关于总结过程的说明性文字；2) 如果原文中有图片链接（格式如![](images/xxx.jpg)），请在总结中保留这些图片链接，如果文中有对图片的相关描述可以简要提及："
+  30:
+    strategy: "concise_summary"
+    detail_level: "low"
+    prompt_template: "请对以下英文学术文本进行简洁的中文总结，保留30%的信息量，只包含最重要的创新点和结论。要求：1) 直接输出总结内容，不要添加任何关于总结过程的说明性文字；2) 不要使用括号注释说明总结策略或信息保留比例；3) 保持学术性和专业性；4) 如果原文中有图片链接（格式如![](images/xxx.jpg)），请在总结中保留这些图片链接："
+  15:
+    strategy: "brief_summary"
+    detail_level: "minimal"
+    prompt_template: "请用1-2句话概括以下英文学术文本的核心贡献和主要结论。要求：1) 直接输出总结内容，不要添加关于总结过程的说明性文字；2) 如果原文中有图片链接（格式如![](images/xxx.jpg)），请保留关键的图片链接："

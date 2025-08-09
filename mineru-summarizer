@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""
+MinerU内容总结器 - 统一入口
+集成所有最佳特性的统一版本
+"""
+
+import asyncio
+import sys
+from pathlib import Path
+import argparse
+
+# 添加项目根目录到Python路径
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.config.unified_config import load_unified_config, save_config_template
+from src.core.summary_engine import SummaryEngine
+from src.core.backend_manager import BackendManager
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """创建命令行参数解析器"""
+    parser = argparse.ArgumentParser(
+        description="MinerU内容总结器 - 统一版本",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  # 生成配置模板
+  mineru-summarizer --init-config
+
+  # 基础总结
+  mineru-summarizer input_dir output.md
+
+  # 指定压缩级别和配置
+  mineru-summarizer input_dir output.md --compression 30 --config config.yaml
+
+  # 启用二次打磨
+  mineru-summarizer input_dir output.md --polish
+
+  # 恢复中断的任务
+  mineru-summarizer --resume session_id
+
+  # 管理检查点
+  mineru-summarizer --list-checkpoints
+  mineru-summarizer --clean-checkpoints 7
+
+特性:
+  ✅ 基于Markdown header的大章节分片 (V3特性)
+  ✅ 支持LLM API和Claude CLI后端切换
+  ✅ 检查点恢复机制，防止限流中断
+  ✅ 可选的二次打磨功能
+  ✅ 智能过滤无关章节 (References等)
+  ✅ 专有技术名词保护
+        """
+    )
+    
+    # 主要操作参数
+    parser.add_argument("input_dir", nargs="?", type=Path, help="输入目录 (包含full.md)")
+    parser.add_argument("output_file", nargs="?", type=Path, help="输出文件路径")
+    
+    # 总结配置
+    parser.add_argument("--compression", "-c", type=int, default=50, choices=[30, 50, 70],
+                       help="压缩级别 (30=精简, 50=标准, 70=详细)")
+    parser.add_argument("--polish", action="store_true", help="启用二次打磨")
+    
+    # 配置和后端
+    parser.add_argument("--config", type=Path, help="配置文件路径")
+    parser.add_argument("--backend", choices=["llm_api", "claude_cli"], help="强制使用指定后端")
+    
+    # 检查点管理
+    parser.add_argument("--resume", type=str, help="恢复指定会话ID")
+    parser.add_argument("--list-checkpoints", action="store_true", help="列出所有检查点")
+    parser.add_argument("--clean-checkpoints", type=int, metavar="DAYS", help="清理N天前的检查点")
+    
+    # 工具功能
+    parser.add_argument("--init-config", action="store_true", help="生成配置文件模板")
+    parser.add_argument("--validate", action="store_true", help="验证配置和后端")
+    
+    return parser
+
+
+def print_banner():
+    """打印横幅"""
+    print("=" * 70)
+    print("🚀 MinerU内容总结器 - 统一版本")
+    print("=" * 70)
+    print("✨ 特性: 大章节分片 + 多后端 + 检查点恢复 + 二次打磨")
+    print("")
+
+
+async def main():
+    """主函数"""
+    parser = create_parser()
+    args = parser.parse_args()
+    
+    print_banner()
+    
+    # 处理工具功能
+    if args.init_config:
+        config_path = Path("mineru-config.yaml")
+        save_config_template(config_path)
+        print(f"✅ 配置模板已生成: {config_path}")
+        print("请编辑配置文件后使用 --config 参数指定")
+        return
+    
+    # 加载配置
+    try:
+        config = load_unified_config(args.config)
+        
+        # 如果指定了后端，覆盖配置
+        if args.backend:
+            print(f"🔧 强制使用后端: {args.backend}")
+            if args.backend == "llm_api":
+                from src.config.unified_config import LLMAPIConfig
+                config.backend = LLMAPIConfig()
+            elif args.backend == "claude_cli":
+                from src.config.unified_config import ClaudeCLIConfig
+                config.backend = ClaudeCLIConfig()
+        
+        # 如果指定了polish，覆盖配置
+        if args.polish:
+            config.polish.enabled = True
+            print("✨ 启用二次打磨")
+        
+    except Exception as e:
+        print(f"❌ 配置加载失败: {e}")
+        print("💡 提示: 使用 --init-config 生成配置模板")
+        sys.exit(1)
+    
+    # 验证配置
+    if args.validate:
+        print("🔍 验证配置...")
+        if BackendManager.validate_backend(config):
+            print("✅ 配置验证通过")
+        else:
+            print("❌ 配置验证失败")
+            sys.exit(1)
+        return
+    
+    # 创建总结引擎
+    engine = SummaryEngine(config)
+    
+    # 处理检查点管理
+    if args.list_checkpoints:
+        engine.list_checkpoints()
+        return
+    
+    if args.clean_checkpoints is not None:
+        engine.clean_checkpoints(args.clean_checkpoints)
+        return
+    
+    # 处理恢复任务
+    if args.resume:
+        print(f"🔄 恢复会话: {args.resume}")
+        try:
+            await engine.summarize(
+                input_dir=Path("."),  # 占位符
+                output_path=Path("."),  # 占位符
+                resume_session=args.resume
+            )
+        except Exception as e:
+            print(f"❌ 恢复失败: {e}")
+            sys.exit(1)
+        return
+    
+    # 处理新任务
+    if not args.input_dir or not args.output_file:
+        print("❌ 错误: 需要提供输入目录和输出文件")
+        print("💡 使用 --help 查看详细用法")
+        sys.exit(1)
+    
+    # 验证输入
+    if not args.input_dir.exists():
+        print(f"❌ 错误: 输入目录不存在: {args.input_dir}")
+        sys.exit(1)
+    
+    full_md_path = args.input_dir / "full.md"
+    if not full_md_path.exists():
+        print(f"❌ 错误: 未找到full.md文件: {full_md_path}")
+        sys.exit(1)
+    
+    # 验证后端
+    if not BackendManager.validate_backend(config):
+        print("❌ 后端验证失败")
+        sys.exit(1)
+    
+    # 执行总结任务
+    try:
+        await engine.summarize(
+            input_dir=args.input_dir,
+            output_path=args.output_file,
+            compression_level=args.compression
+        )
+        
+        print(f"\n🎉 任务完成!")
+        print(f"📄 输出文件: {args.output_file}")
+        
+        if config.processing.enable_checkpoint:
+            print(f"💡 提示: 如果任务被中断，使用 --list-checkpoints 查看可恢复的会话")
+        
+    except KeyboardInterrupt:
+        print(f"\n⏸️ 任务被中断")
+        if config.processing.enable_checkpoint:
+            print("💾 进度已保存，使用 --list-checkpoints 查看检查点")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 执行失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+def sync_main():
+    """同步入口点"""
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 再见!")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    sync_main()
