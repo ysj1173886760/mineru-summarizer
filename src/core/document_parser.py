@@ -42,7 +42,7 @@ class DocumentParser:
         )
     
     def parse_markdown_file(self, file_path: Path) -> List[DocumentChunk]:
-        """解析Markdown文件"""
+        """解析Markdown文件，保持章节的原始顺序"""
         
         # 读取markdown内容
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -56,6 +56,7 @@ class DocumentParser:
         
         final_chunks = []
         skipped_chapters = []
+        chunk_index = 0  # 用于保持顺序的索引
         
         for i, chunk in enumerate(header_chunks):
             # 提取章节信息
@@ -70,9 +71,9 @@ class DocumentParser:
             sub_sections = self._extract_sub_sections(chunk.page_content)
             
             if token_count <= self.max_tokens_per_chapter:
-                # 章节大小合适，直接使用
+                # 章节大小合适，直接使用，保持原始顺序
                 chapter_chunk = DocumentChunk(
-                    id=f"chapter_{len(final_chunks)}",
+                    id=f"chapter_{chunk_index:03d}",  # 使用3位数编号确保排序正确
                     content=chunk.page_content,
                     metadata=chunk.metadata,
                     token_count=token_count,
@@ -81,10 +82,12 @@ class DocumentParser:
                     sub_sections=sub_sections
                 )
                 final_chunks.append(chapter_chunk)
+                chunk_index += 1
             else:
-                # 章节太大，按二级标题分割
-                sub_chunks = self._split_large_chapter(chunk, len(final_chunks))
+                # 章节太大，按二级标题分割，保持原始顺序
+                sub_chunks = self._split_large_chapter(chunk, chunk_index)
                 final_chunks.extend(sub_chunks)
+                chunk_index += len(sub_chunks)
         
         if skipped_chapters:
             print(f"🚫 跳过的章节: {', '.join(skipped_chapters)}")
@@ -117,7 +120,7 @@ class DocumentParser:
         return False
     
     def _split_large_chapter(self, chunk, chapter_index: int) -> List[DocumentChunk]:
-        """分割过大的章节"""
+        """分割过大的章节，保持原始顺序"""
         # 创建包含二级标题的分割器
         sub_splitter = MarkdownHeaderTextSplitter(
             headers_to_split_on=[
@@ -138,7 +141,7 @@ class DocumentParser:
             sub_sections = self._extract_sub_sections(sub_chunk.page_content)
             
             chapter_chunk = DocumentChunk(
-                id=f"chapter_{chapter_index}_{j}",
+                id=f"chapter_{chapter_index:03d}_{j:03d}",  # 使用3位数编号确保排序正确
                 content=sub_chunk.page_content,
                 metadata=sub_chunk.metadata,
                 token_count=token_count,

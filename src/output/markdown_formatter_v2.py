@@ -2,14 +2,14 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import re
 from datetime import datetime
-from ..summarizer.summary_generator import SummaryResult, SummaryPostProcessor
-from ..utils.config import OutputConfig
+from ..core.checkpoint_manager import SummaryResult
+from ..config.unified_config import OutputConfig
 
 
 class MarkdownFormatterV2:
-    """V2版本的Markdown格式化器 - 支持更好的章节排序"""
+    """V2版本的Markdown格式化器 - 保持原始章节顺序"""
     
-    def __init__(self, config: OutputConfig):
+    def __init__(self, config):
         self.config = config
         
     def format_summaries(
@@ -90,21 +90,21 @@ class MarkdownFormatterV2:
         """生成目录"""
         toc_parts = ["## 目录"]
         
-        # 收集并排序章节
-        sections = []
-        for summary in summaries:
-            sections.append((summary.section_level, summary.section_title))
-        
-        # 去重并排序
-        seen = set()
+        # 收集章节并保持原始顺序
         unique_sections = []
-        for level, title in sections:
-            if (level, title) not in seen:
-                seen.add((level, title))
-                unique_sections.append((level, title))
+        seen = set()
         
-        # 智能排序：先按章节编号，再按字母顺序
-        sorted_sections = self._smart_sort_sections(unique_sections)
+        # 首先按chunk_id排序确保原始顺序
+        sorted_summaries = sorted(summaries, key=lambda x: x.chunk_id)
+        
+        for summary in sorted_summaries:
+            section_tuple = (summary.section_level, summary.section_title)
+            if section_tuple not in seen:
+                seen.add(section_tuple)
+                unique_sections.append(section_tuple)
+        
+        # 使用原始顺序，不进行额外排序
+        sorted_sections = unique_sections
         
         # 生成目录项
         for level, title in sorted_sections:
@@ -114,80 +114,45 @@ class MarkdownFormatterV2:
         
         return "\n".join(toc_parts)
     
-    def _smart_sort_sections(self, sections: List[tuple]) -> List[tuple]:
-        """智能排序章节：按章节编号优先，然后字母顺序"""
+    def _merge_section_summaries_ordered(self, summaries: List[SummaryResult]) -> Dict[str, str]:
+        """按原始顺序合并章节总结"""
+        # 首先按chunk_id排序，确保原始顺序
+        sorted_summaries = sorted(summaries, key=lambda x: x.chunk_id)
         
-        def extract_chapter_number(title: str) -> tuple:
-            """提取章节编号用于排序"""
-            # 匹配各种章节编号格式
-            patterns = [
-                r'^(\d+)\.(\d+)\.(\d+)\s',  # 1.2.3 格式
-                r'^(\d+)\.(\d+)\s',         # 1.2 格式  
-                r'^(\d+)\s',                # 1 格式
-            ]
-            
-            for pattern in patterns:
-                match = re.match(pattern, title)
-                if match:
-                    numbers = [int(x) for x in match.groups()]
-                    # 补齐到3位数字，便于排序
-                    while len(numbers) < 3:
-                        numbers.append(0)
-                    return tuple(numbers)
-            
-            # 如果没有匹配到数字，按特殊规则处理
-            if title.upper().startswith('ABSTRACT'):
-                return (0, 0, 1)  # Abstract排在最前
-            elif title.upper().startswith('CONTENTS'):
-                return (0, 0, 2)  # Contents排在Abstract后
-            elif 'CONCLUSION' in title.upper():
-                return (999, 0, 0)  # Conclusion排在最后
-            elif 'REFERENCE' in title.upper():
-                return (999, 1, 0)  # References排在Conclusion后
+        section_summaries = {}
+        
+        # 按照排序后的顺序处理，同一章节的内容合并
+        for summary in sorted_summaries:
+            section_key = f"{summary.section_level}_{summary.section_title}"
+            if section_key not in section_summaries:
+                section_summaries[section_key] = summary.summary
             else:
-                # 按字母顺序排序，但放在有数字章节之后
-                return (900, ord(title[0].upper()) if title else 900, 0)
+                # 如果同一章节有多个部分，按顺序合并
+                section_summaries[section_key] += f"\n\n{summary.summary}"
         
-        # 按提取的章节编号排序
-        sections_with_sort_key = []
-        for level, title in sections:
-            sort_key = extract_chapter_number(title)
-            sections_with_sort_key.append((sort_key, level, title))
-        
-        sections_with_sort_key.sort(key=lambda x: x[0])
-        
-        # 返回排序后的结果
-        return [(level, title) for _, level, title in sections_with_sort_key]
+        return section_summaries
     
     def _format_content(self, summaries: List[SummaryResult]) -> str:
         """格式化主要内容"""
-        # 按章节合并总结
-        section_summaries = SummaryPostProcessor.merge_section_summaries(summaries)
+        # 按章节合并总结并保持原始顺序
+        section_summaries = self._merge_section_summaries_ordered(summaries)
         
-        # 创建包含级别信息的章节列表
-        sections_with_level = []
-        for summary in summaries:
+        # 按原始顺序组织章节内容
+        sorted_sections_with_content = []
+        seen_sections = set()
+        
+        # 首先按chunk_id排序确保原始顺序
+        sorted_summaries = sorted(summaries, key=lambda x: x.chunk_id)
+        
+        for summary in sorted_summaries:
             section_key = f"{summary.section_level}_{summary.section_title}"
-            if section_key in section_summaries:
-                sections_with_level.append((
-                    summary.section_level, 
-                    summary.section_title, 
+            if section_key not in seen_sections and section_key in section_summaries:
+                sorted_sections_with_content.append((
+                    summary.section_level,
+                    summary.section_title,
                     section_summaries[section_key]
                 ))
-                # 避免重复添加
-                del section_summaries[section_key]
-        
-        # 智能排序
-        sorted_sections = self._smart_sort_sections([(level, title) for level, title, _ in sections_with_level])
-        
-        # 重新组织内容
-        sorted_sections_with_content = []
-        for level, title in sorted_sections:
-            # 找到对应的内容
-            for orig_level, orig_title, content in sections_with_level:
-                if orig_level == level and orig_title == title:
-                    sorted_sections_with_content.append((level, title, content))
-                    break
+                seen_sections.add(section_key)
         
         # 格式化每个章节
         content_parts = []

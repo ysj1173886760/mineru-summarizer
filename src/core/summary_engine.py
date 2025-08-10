@@ -205,11 +205,13 @@ class SummaryEngine:
         # 创建后端
         backend = BackendManager.create_backend(self.config)
         
-        # 处理章节
+        # 处理章节 - 按原始顺序处理
         async with backend:
             with tqdm(total=len(pending_chunks), desc="生成总结", initial=len(completed_ids)) as pbar:
+                # 按chunk.id排序确保处理顺序正确
+                pending_chunks_sorted = sorted(pending_chunks, key=lambda x: x.id)
                 # 逐个处理以便实时保存检查点
-                for chunk in pending_chunks:
+                for chunk in pending_chunks_sorted:
                     try:
                         # 构建提示词
                         full_prompt = self._build_summary_prompt(
@@ -426,6 +428,7 @@ class SummaryEngine:
 4. 结构完善：优化段落结构，提升可读性
 5. 信息密度：在保持{compression_level}%信息量的基础上，提升信息的价值密度
 6. 学术规范：符合中文学术写作规范，保持严谨性
+7. 如果原文中有图片链接（格式如![](images/xxx.jpg)），请中保留这些图片链接，如果文中有对图片的相关描述可以简要提及
 
 需要保持英文的技术术语（请勿翻译）:
 Graph Neural Networks (GNNs), Graph Foundation Models (GFMs), Transformer, Graph Attention Networks (GAT), GraphSAGE, Message Passing, Node Embedding, Graph Convolutional Networks (GCN), Self-supervised Learning, Pre-training, Fine-tuning, In-context Learning, Few-shot Learning, Zero-shot Learning, Knowledge Graph, Heterogeneous Graph, Homogeneous Graph, Graph Isomorphism, Graph Pooling, Graph Classification, Node Classification, Link Prediction, Graph Generation, Graph Anomaly Detection, Contrastive Learning, Multi-modal Learning, Cross-domain Transfer, Domain Adaptation
