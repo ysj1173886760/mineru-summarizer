@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.config.unified_config import load_unified_config, save_config_template
 from src.core.summary_engine import SummaryEngine
 from src.core.backend_manager import BackendManager
+from src.core.document_parser import DocumentParser
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -36,12 +37,18 @@ def create_parser() -> argparse.ArgumentParser:
   # 启用二次打磨
   mineru-summarizer input_dir output.md --polish
 
+  # 启用Debug模式保存所有pairs
+  mineru-summarizer input_dir output.md --debug-pairs
+
   # 恢复中断的任务
   mineru-summarizer --resume session_id
 
   # 管理检查点
   mineru-summarizer --list-checkpoints
   mineru-summarizer --clean-checkpoints 7
+  
+  # Debug模式 - 查看文档分片
+  mineru-summarizer input_dir --debug-chunks
 
 特性:
   ✅ 基于Markdown header的大章节分片 (V3特性)
@@ -50,6 +57,8 @@ def create_parser() -> argparse.ArgumentParser:
   ✅ 可选的二次打磨功能
   ✅ 智能过滤无关章节 (References等)
   ✅ 专有技术名词保护
+  ✅ Debug模式：预览文档分片效果
+  ✅ Debug模式：保存所有(原文,总结)对用于追溯
         """
     )
     
@@ -58,9 +67,10 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("output_file", nargs="?", type=Path, help="输出文件路径")
     
     # 总结配置
-    parser.add_argument("--compression", "-c", type=int, default=50, choices=[30, 50, 70],
-                       help="压缩级别 (30=精简, 50=标准, 70=详细)")
+    parser.add_argument("--compression", "-c", type=int, default=50, choices=[30, 50, 70, 100],
+                       help="压缩级别 (30=精简, 50=标准, 70=详细, 100=翻译)")
     parser.add_argument("--polish", action="store_true", help="启用二次打磨")
+    parser.add_argument("--debug-pairs", action="store_true", help="Debug模式：保存所有(原文,总结)对，用于追溯翻译过程")
     
     # 配置和后端
     parser.add_argument("--config", type=Path, help="配置文件路径")
@@ -74,6 +84,7 @@ def create_parser() -> argparse.ArgumentParser:
     # 工具功能
     parser.add_argument("--init-config", action="store_true", help="生成配置文件模板")
     parser.add_argument("--validate", action="store_true", help="验证配置和后端")
+    parser.add_argument("--debug-chunks", action="store_true", help="Debug模式：只分片文档，输出分片内容，不进行总结")
     
     return parser
 
@@ -85,6 +96,67 @@ def print_banner():
     print("=" * 70)
     print("✨ 特性: 大章节分片 + 多后端 + 检查点恢复 + 二次打磨")
     print("")
+
+
+async def debug_chunks(input_dir: Path, config):
+    """Debug模式：只分片文档并输出每个分片内容"""
+    print("🔍 Debug模式：文档分片调试")
+    print(f"📂 输入目录: {input_dir}")
+    
+    # 解析文档
+    print("\n📚 解析Markdown文档...")
+    full_md_path = input_dir / "full.md"
+    parser = DocumentParser(config.processing.max_tokens_per_chapter)
+    chapter_chunks = parser.parse_markdown_file(full_md_path)
+    
+    print(f"✅ 解析完成，生成 {len(chapter_chunks)} 个分片")
+    parser.print_statistics(chapter_chunks)
+    
+    # 输出每个分片的详细内容
+    print("\n" + "=" * 70)
+    print("📄 分片内容详情")
+    print("=" * 70)
+    
+    for i, chunk in enumerate(chapter_chunks, 1):
+        print(f"\n🔖 分片 {i}: {chunk.id}")
+        print(f"📝 标题: {chunk.chapter_title}")
+        print(f"📊 层级: {chunk.chapter_level}")
+        print(f"🔢 Token数: {chunk.token_count:,}")
+        print(f"📋 子章节数: {len(chunk.sub_sections)}")
+        
+        if chunk.sub_sections:
+            print("📚 子章节:")
+            for sub in chunk.sub_sections[:10]:  # 最多显示10个子章节
+                print(f"   • {sub}")
+            if len(chunk.sub_sections) > 10:
+                print(f"   ... 还有 {len(chunk.sub_sections) - 10} 个子章节")
+        
+        print(f"\n📖 内容预览 (前500字符):")
+        print("-" * 50)
+        preview_content = chunk.content[:500]
+        print(preview_content)
+        if len(chunk.content) > 500:
+            print("...")
+            print(f"(完整内容共 {len(chunk.content)} 字符)")
+        print("-" * 50)
+        
+        # 问用户是否要看完整内容
+        if len(chunk.content) > 500:
+            user_input = input(f"\n💡 是否查看完整内容? (y/N): ").strip().lower()
+            if user_input in ['y', 'yes']:
+                print("\n📄 完整内容:")
+                print("=" * 50)
+                print(chunk.content)
+                print("=" * 50)
+        
+        # 在每个分片之间暂停，让用户可以仔细查看
+        if i < len(chapter_chunks):
+            user_input = input(f"\n⏸️ 按 Enter 继续查看下一个分片，或输入 'q' 退出: ").strip().lower()
+            if user_input == 'q':
+                break
+    
+    print(f"\n🎉 Debug完成！总共检查了 {len(chapter_chunks)} 个分片")
+    print("💡 提示：如果分片看起来正确，你可以运行正常的总结命令")
 
 
 async def main():
@@ -121,6 +193,11 @@ async def main():
             config.polish.enabled = True
             print("✨ 启用二次打磨")
         
+        # 如果指定了debug-pairs，设置标志
+        debug_pairs_enabled = args.debug_pairs
+        if debug_pairs_enabled:
+            print("🔍 启用Debug模式：将保存所有(原文,总结)对")
+        
     except Exception as e:
         print(f"❌ 配置加载失败: {e}")
         print("💡 提示: 使用 --init-config 生成配置模板")
@@ -134,6 +211,26 @@ async def main():
         else:
             print("❌ 配置验证失败")
             sys.exit(1)
+        return
+    
+    # 处理Debug模式
+    if args.debug_chunks:
+        if not args.input_dir:
+            print("❌ 错误: Debug模式需要提供输入目录")
+            print("💡 使用: mineru-summarizer input_dir --debug-chunks")
+            sys.exit(1)
+        
+        # 验证输入
+        if not args.input_dir.exists():
+            print(f"❌ 错误: 输入目录不存在: {args.input_dir}")
+            sys.exit(1)
+        
+        full_md_path = args.input_dir / "full.md"
+        if not full_md_path.exists():
+            print(f"❌ 错误: 未找到full.md文件: {full_md_path}")
+            sys.exit(1)
+        
+        await debug_chunks(args.input_dir, config)
         return
     
     # 创建总结引擎
@@ -188,7 +285,8 @@ async def main():
         await engine.summarize(
             input_dir=args.input_dir,
             output_path=args.output_file,
-            compression_level=args.compression
+            compression_level=args.compression,
+            debug_pairs=debug_pairs_enabled
         )
         
         print(f"\n🎉 任务完成!")
