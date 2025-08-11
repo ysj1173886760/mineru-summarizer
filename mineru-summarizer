@@ -16,6 +16,7 @@ from src.config.unified_config import load_unified_config, save_config_template
 from src.core.summary_engine import SummaryEngine
 from src.core.backend_manager import BackendManager
 from src.core.document_parser import DocumentParser
+from src.core.image_uploader import ImageUploader
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -50,6 +51,9 @@ def create_parser() -> argparse.ArgumentParser:
   # Debug模式 - 查看文档分片
   mineru-summarizer input_dir --debug-chunks
 
+  # 图片上传功能
+  mineru-summarizer upload-images input.md output.md --config config.yaml
+
 特性:
   ✅ 基于Markdown header的大章节分片 (V3特性)
   ✅ 支持LLM API和Claude CLI后端切换
@@ -59,12 +63,27 @@ def create_parser() -> argparse.ArgumentParser:
   ✅ 专有技术名词保护
   ✅ Debug模式：预览文档分片效果
   ✅ Debug模式：保存所有(原文,总结)对用于追溯
+  ✅ 图片上传：自动上传本地图片到S3并替换链接
         """
     )
     
-    # 主要操作参数
+    # 子命令支持
+    subparsers = parser.add_subparsers(dest="command", help="可用命令")
+    
+    # upload-images子命令
+    upload_parser = subparsers.add_parser(
+        "upload-images", 
+        help="上传Markdown文件中的本地图片到S3",
+        description="检测Markdown文件中的本地图片引用，上传到S3并替换为公网链接"
+    )
+    upload_parser.add_argument("input_file", type=Path, help="输入的Markdown文件")
+    upload_parser.add_argument("output_file", type=Path, help="输出的Markdown文件")
+    upload_parser.add_argument("--dry-run", action="store_true", help="只检测图片，不实际上传")
+    upload_parser.add_argument("--backup", action="store_true", help="创建原文件备份")
+    
+    # 默认的主要操作参数（为了兼容性，避免与子命令参数冲突）
     parser.add_argument("input_dir", nargs="?", type=Path, help="输入目录 (包含full.md)")
-    parser.add_argument("output_file", nargs="?", type=Path, help="输出文件路径")
+    parser.add_argument("summary_output", nargs="?", type=Path, help="总结输出文件路径")
     
     # 总结配置
     parser.add_argument("--compression", "-c", type=int, default=50, choices=[30, 50, 70, 100],
@@ -72,7 +91,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--polish", action="store_true", help="启用二次打磨")
     parser.add_argument("--debug-pairs", action="store_true", help="Debug模式：保存所有(原文,总结)对，用于追溯翻译过程")
     
-    # 配置和后端
+    # 全局配置和后端参数
     parser.add_argument("--config", type=Path, help="配置文件路径")
     parser.add_argument("--backend", choices=["llm_api", "claude_cli"], help="强制使用指定后端")
     
@@ -159,12 +178,109 @@ async def debug_chunks(input_dir: Path, config):
     print("💡 提示：如果分片看起来正确，你可以运行正常的总结命令")
 
 
+async def handle_upload_images(args):
+    """处理图片上传命令"""
+    print("🖼️ 图片上传模式")
+    print(f"📂 输入文件: {args.input_file}")
+    print(f"📄 输出文件: {args.output_file}")
+    
+    # 验证输入文件
+    if not args.input_file.exists():
+        print(f"❌ 错误: 输入文件不存在: {args.input_file}")
+        sys.exit(1)
+    
+    if not args.input_file.suffix.lower() in ['.md', '.markdown']:
+        print(f"❌ 错误: 输入文件必须是Markdown格式: {args.input_file}")
+        sys.exit(1)
+    
+    # 加载配置
+    try:
+        config = load_unified_config(args.config)
+        
+        if not config.s3.enabled:
+            print("❌ 错误: S3配置未启用，请在配置文件中设置 s3.enabled: true")
+            print("💡 提示: 使用 --init-config 生成配置模板")
+            sys.exit(1)
+        
+    except Exception as e:
+        print(f"❌ 配置加载失败: {e}")
+        print("💡 提示: 使用 --init-config 生成配置模板")
+        sys.exit(1)
+    
+    # 创建备份
+    if args.backup:
+        backup_path = args.input_file.with_suffix(f"{args.input_file.suffix}.backup")
+        print(f"💾 创建备份: {backup_path}")
+        import shutil
+        shutil.copy2(args.input_file, backup_path)
+    
+    try:
+        # 初始化图片上传器
+        uploader = ImageUploader(config, dry_run=args.dry_run)
+        
+        if args.dry_run:
+            print("🔍 Dry Run 模式：只检测图片，不上传")
+            
+            # 读取文件
+            with open(args.input_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 查找图片
+            base_dir = args.input_file.parent
+            found_images = uploader.find_local_images(content, base_dir)
+            
+            if not found_images:
+                print("📄 未找到本地图片引用")
+                return
+            
+            print(f"📸 找到 {len(found_images)} 个图片引用:")
+            for i, img_info in enumerate(found_images, 1):
+                status = "✅ 存在" if img_info["is_valid"] else "❌ 不存在"
+                print(f"  {i}. {img_info['image_path']} -> {img_info['local_path']} ({status})")
+            
+            valid_count = sum(1 for img in found_images if img["is_valid"])
+            print(f"\n📊 统计: 总计 {len(found_images)} 个，有效 {valid_count} 个")
+            
+        else:
+            # 实际处理
+            processed_content, stats = uploader.process_markdown_file(args.input_file)
+            
+            # 写入输出文件
+            with open(args.output_file, 'w', encoding='utf-8') as f:
+                f.write(processed_content)
+            
+            print(f"\n🎉 处理完成!")
+            print(f"📄 输出文件: {args.output_file}")
+            print(f"📊 统计: 总计 {stats['total']} 个图片")
+            print(f"  ✅ 成功上传: {stats['uploaded']} 个")
+            print(f"  ⏭️ 跳过: {stats['skipped']} 个")
+            print(f"  ❌ 错误: {stats['errors']} 个")
+            
+            if stats['errors'] > 0:
+                print("⚠️ 存在错误的图片引用，请检查日志")
+        
+    except ImportError:
+        print("❌ 缺少依赖: 请安装 boto3")
+        print("💡 运行: pip install boto3")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ 处理失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 async def main():
     """主函数"""
     parser = create_parser()
     args = parser.parse_args()
     
     print_banner()
+    
+    # 处理图片上传命令
+    if args.command == "upload-images":
+        await handle_upload_images(args)
+        return
     
     # 处理工具功能
     if args.init_config:
@@ -260,7 +376,7 @@ async def main():
         return
     
     # 处理新任务
-    if not args.input_dir or not args.output_file:
+    if not args.input_dir or not args.summary_output:
         print("❌ 错误: 需要提供输入目录和输出文件")
         print("💡 使用 --help 查看详细用法")
         sys.exit(1)
@@ -284,13 +400,13 @@ async def main():
     try:
         await engine.summarize(
             input_dir=args.input_dir,
-            output_path=args.output_file,
+            output_path=args.summary_output,
             compression_level=args.compression,
             debug_pairs=debug_pairs_enabled
         )
         
         print(f"\n🎉 任务完成!")
-        print(f"📄 输出文件: {args.output_file}")
+        print(f"📄 输出文件: {args.summary_output}")
         
         if config.processing.enable_checkpoint:
             print(f"💡 提示: 如果任务被中断，使用 --list-checkpoints 查看可恢复的会话")

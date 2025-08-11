@@ -10,6 +10,7 @@
 - ✨ **二次打磨**: 可选的内容质量提升功能
 - 🎯 **压缩灵活**: 30%/50%/70%三档压缩比例
 - 🔤 **术语保护**: 自动保持专业技术名词的英文原文
+- 🖼️ **图片上传**: 自动检测MD文件中的本地图片，上传到S3并替换为公网链接
 
 ## 🚀 快速开始
 
@@ -42,6 +43,16 @@ processing:
 polish:
   enabled: false           # 是否启用二次打磨
   temperature: 0.2
+
+s3:
+  enabled: false           # 是否启用S3图片上传
+  access_key_id: ${S3_ACCESS_KEY_ID}
+  secret_access_key: ${S3_SECRET_ACCESS_KEY}
+  bucket_name: ${S3_BUCKET_NAME}
+  endpoint_url: ${S3_ENDPOINT_URL}  # 可选，支持自定义端点
+  region_name: us-east-1
+  path_prefix: images/
+  public_url_template: https://your-domain.com/{bucket}/{key}
 ```
 
 ### 3. 基础使用
@@ -58,6 +69,9 @@ polish:
 # 启用二次打磨
 ./mineru-summarizer /path/to/mineru/output summary.md \
   --polish
+
+# 图片上传功能
+./mineru-summarizer upload-images input.md output.md --config mineru-config.yaml
 ```
 
 ## 📖 详细用法
@@ -79,6 +93,11 @@ polish:
   --clean-checkpoints DAYS        清理N天前的检查点
   --init-config                   生成配置文件模板
   --validate                      验证配置和后端
+
+图片上传子命令:
+  upload-images INPUT OUTPUT      上传MD文件中的本地图片到S3
+  --dry-run                       只检测图片，不实际上传
+  --backup                        创建原文件备份
 ```
 
 ### 使用场景
@@ -139,6 +158,22 @@ polish:
 ./mineru-summarizer --init-config
 ```
 
+#### 🖼️ 图片上传
+
+```bash
+# 检测MD文件中的本地图片引用（不实际上传）
+./mineru-summarizer upload-images document.md output.md --dry-run
+
+# 上传本地图片到S3并替换链接
+./mineru-summarizer upload-images document.md output.md --config config.yaml
+
+# 上传时创建原文件备份
+./mineru-summarizer upload-images document.md output.md --backup
+
+# 使用自定义配置文件
+./mineru-summarizer upload-images document.md output.md --config my-config.yaml
+```
+
 ## 📁 输入要求
 
 输入目录应包含MinerU的提取结果：
@@ -192,6 +227,16 @@ output:
   format: markdown              # 输出格式
   language: zh-CN              # 输出语言
   include_toc: true            # 包含目录
+
+s3:
+  enabled: true                 # 启用S3图片上传功能
+  access_key_id: your_key       # S3访问密钥
+  secret_access_key: your_secret # S3密钥
+  bucket_name: my-bucket        # S3存储桶名
+  endpoint_url: https://s3.amazonaws.com  # 可选，自定义端点
+  region_name: us-east-1        # 区域
+  path_prefix: images/          # 存储路径前缀
+  public_url_template: https://cdn.example.com/{bucket}/{key}  # 可选，自定义URL模板
 ```
 
 ## 🔍 压缩级别说明
@@ -234,11 +279,88 @@ export DEBUG=1
 - **章节大小**: 调整 `max_tokens_per_chapter` 平衡质量和速度
 - **检查点**: 长文档建议启用 `enable_checkpoint`
 
+## 🖼️ 图片上传功能详解
+
+### 功能特点
+
+- ✅ **自动检测**: 识别MD文件中的本地图片引用（支持 `![](path)` 和 `<img src="path">` 格式）
+- ✅ **智能跳过**: 自动跳过网络图片链接（http/https开头）
+- ✅ **去重上传**: 基于文件内容哈希避免重复上传相同图片
+- ✅ **批量处理**: 一次处理文件中的所有本地图片引用
+- ✅ **安全配置**: 支持环境变量，避免敏感信息泄露
+- ✅ **预览模式**: Dry-run模式检查图片而不实际上传
+- ✅ **备份保护**: 可选择备份原文件
+
+### 工作流程
+
+1. **扫描文件**: 使用正则表达式查找所有图片引用
+2. **过滤筛选**: 跳过网络链接，只处理本地路径
+3. **路径解析**: 解析相对路径为绝对路径
+4. **上传处理**: 
+   - 生成基于内容哈希的唯一文件名
+   - 检查S3中是否已存在（避免重复上传）
+   - 上传文件并设置公共读权限
+5. **链接替换**: 将本地路径替换为S3公网URL
+6. **保存结果**: 将处理后的内容写入输出文件
+
+### S3配置说明
+
+#### 必需配置
+- `enabled`: 必须设置为 `true`
+- `access_key_id`: S3访问密钥ID
+- `secret_access_key`: S3访问密钥
+- `bucket_name`: S3存储桶名称
+
+#### 可选配置
+- `endpoint_url`: 自定义S3端点（支持其他S3兼容存储）
+- `region_name`: 区域名称（默认: us-east-1）
+- `path_prefix`: 存储路径前缀（默认: images/）
+- `public_url_template`: 自定义URL模板，支持CDN等
+
+#### 环境变量支持
+```bash
+export S3_ACCESS_KEY_ID="your_access_key"
+export S3_SECRET_ACCESS_KEY="your_secret_key"
+export S3_BUCKET_NAME="your_bucket"
+export S3_ENDPOINT_URL="https://your-endpoint.com"
+```
+
+### 使用示例
+
+#### 处理包含图片的文档
+假设有以下MD文件内容：
+```markdown
+# 文档标题
+
+这里有一张图片：
+![示例图片](./images/example.png)
+
+还有HTML格式的图片：
+<img src="../photos/chart.jpg" alt="图表" width="500">
+
+网络图片会被跳过：
+![网络图片](https://example.com/image.png)
+```
+
+运行命令后，本地图片路径会被替换为S3公网链接：
+```markdown
+# 文档标题
+
+这里有一张图片：
+![示例图片](https://your-domain.com/bucket/images/example_a1b2c3d4.png)
+
+还有HTML格式的图片：
+<img src="https://your-domain.com/bucket/images/chart_e5f6g7h8.jpg" alt="图表" width="500">
+
+网络图片会被跳过：
+![网络图片](https://example.com/image.png)
+```
+
 ## TODO(sheep):
 
 - [] 删除无效代码，只保留mineru-summarizer的代码
 - [] 不依赖mineru的输出格式，只使用md文件做切片+翻译
-- [] 图片上传到oss中，并生成图片链接
+- [x] 图片上传到oss中，并生成图片链接
 
 ## 🤝 贡献
 

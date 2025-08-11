@@ -9,3 +9,4 @@ python-dotenv>=1.0.0
 tqdm>=4.64.0
 langchain>=0.1.0
 langchain-text-splitters>=0.0.1
+oss2>=2.15.0

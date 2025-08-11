@@ -51,6 +51,19 @@ class PolishConfig:
 
 
 @dataclass
+class S3Config:
+    """S3配置"""
+    enabled: bool = False
+    endpoint_url: Optional[str] = None
+    access_key_id: Optional[str] = None
+    secret_access_key: Optional[str] = None
+    region_name: str = "us-east-1"
+    bucket_name: Optional[str] = None
+    path_prefix: str = "images/"
+    public_url_template: Optional[str] = None  # 如 "https://your-domain.com/{bucket}/{key}"
+
+
+@dataclass
 class OutputConfig:
     """输出配置"""
     format: str = "markdown"
@@ -67,6 +80,7 @@ class UnifiedConfig:
     processing: ProcessingConfig
     polish: PolishConfig
     output: OutputConfig
+    s3: S3Config
     compression_levels: Dict[int, Dict[str, str]]
 
 
@@ -128,7 +142,21 @@ def load_unified_config(config_path: Optional[Path] = None) -> UnifiedConfig:
         format=output_config.get("format", "markdown"),
         language=output_config.get("language", "zh-CN"),
         include_toc=output_config.get("include_toc", True),
-        include_images=output_config.get("include_images", True)
+        include_images=output_config.get("include_images", True),
+        image_path_prefix=output_config.get("image_path_prefix", "./images/")
+    )
+    
+    # S3配置
+    s3_config = config_dict.get("s3", {})
+    s3 = S3Config(
+        enabled=s3_config.get("enabled", False),
+        endpoint_url=s3_config.get("endpoint_url") or os.getenv("S3_ENDPOINT_URL"),
+        access_key_id=s3_config.get("access_key_id") or os.getenv("S3_ACCESS_KEY_ID"),
+        secret_access_key=s3_config.get("secret_access_key") or os.getenv("S3_SECRET_ACCESS_KEY"),
+        region_name=s3_config.get("region_name", "us-east-1"),
+        bucket_name=s3_config.get("bucket_name") or os.getenv("S3_BUCKET_NAME"),
+        path_prefix=s3_config.get("path_prefix", "images/"),
+        public_url_template=s3_config.get("public_url_template")
     )
     
     # 压缩级别配置
@@ -152,6 +180,7 @@ def load_unified_config(config_path: Optional[Path] = None) -> UnifiedConfig:
         processing=processing,
         polish=polish,
         output=output,
+        s3=s3,
         compression_levels=compression_levels
     )
 
@@ -188,7 +217,18 @@ def save_config_template(output_path: Path) -> None:
             "format": "markdown",
             "language": "zh-CN",
             "include_toc": True,
-            "include_images": True
+            "include_images": True,
+            "image_path_prefix": "./images/"
+        },
+        "s3": {
+            "enabled": False,
+            "endpoint_url": "${S3_ENDPOINT_URL}",
+            "access_key_id": "${S3_ACCESS_KEY_ID}",
+            "secret_access_key": "${S3_SECRET_ACCESS_KEY}",
+            "region_name": "us-east-1",
+            "bucket_name": "${S3_BUCKET_NAME}",
+            "path_prefix": "images/",
+            "public_url_template": "https://your-domain.com/{bucket}/{key}"
         },
         "compression_levels": {
             30: {
