@@ -3,6 +3,14 @@ from typing import Optional, Dict, Any, Literal
 import yaml
 import os
 from dataclasses import dataclass
+from enum import Enum
+
+
+class ChunkStrategy(Enum):
+    """分块策略枚举"""
+    AUTO = "auto"                    # 自动模式：根据文档大小智能选择
+    SPLIT_BY_CHAPTER = "split_by_chapter"  # 按章节分割：每个章节一个分片
+    SPLIT_BY_SIZE = "split_by_size"        # 按大小分割：尽量合并到一个分片
 
 
 @dataclass
@@ -40,6 +48,8 @@ class ProcessingConfig:
     max_concurrent: int = 3
     enable_checkpoint: bool = True
     checkpoint_dir: str = ".checkpoints"
+    chunk_strategy: str = ChunkStrategy.SPLIT_BY_CHAPTER.value
+    auto_merge_threshold: int = 8000
 
 
 @dataclass
@@ -71,6 +81,7 @@ class OutputConfig:
     include_toc: bool = True
     include_images: bool = True
     image_path_prefix: str = "./images/"
+    upload_images: bool = True  # 是否自动上传图片
 
 
 @dataclass
@@ -127,7 +138,9 @@ def load_unified_config(config_path: Optional[Path] = None) -> UnifiedConfig:
         max_tokens_per_chapter=processing_config.get("max_tokens_per_chapter", 8000),
         max_concurrent=processing_config.get("max_concurrent", 3),
         enable_checkpoint=processing_config.get("enable_checkpoint", True),
-        checkpoint_dir=processing_config.get("checkpoint_dir", ".checkpoints")
+        checkpoint_dir=processing_config.get("checkpoint_dir", ".checkpoints"),
+        chunk_strategy=processing_config.get("chunk_strategy", ChunkStrategy.SPLIT_BY_CHAPTER.value),
+        auto_merge_threshold=processing_config.get("auto_merge_threshold", 8000)
     )
     
     polish_config = config_dict.get("polish", {})
@@ -143,7 +156,8 @@ def load_unified_config(config_path: Optional[Path] = None) -> UnifiedConfig:
         language=output_config.get("language", "zh-CN"),
         include_toc=output_config.get("include_toc", True),
         include_images=output_config.get("include_images", True),
-        image_path_prefix=output_config.get("image_path_prefix", "./images/")
+        image_path_prefix=output_config.get("image_path_prefix", "./images/"),
+        upload_images=output_config.get("upload_images", True)
     )
     
     # S3配置
@@ -206,7 +220,9 @@ def save_config_template(output_path: Path) -> None:
             "max_tokens_per_chapter": 8000,
             "max_concurrent": 3,
             "enable_checkpoint": True,
-            "checkpoint_dir": ".checkpoints"
+            "checkpoint_dir": ".checkpoints",
+            "chunk_strategy": "auto",
+            "auto_merge_threshold": 8000
         },
         "polish": {
             "enabled": False,
@@ -218,7 +234,8 @@ def save_config_template(output_path: Path) -> None:
             "language": "zh-CN",
             "include_toc": True,
             "include_images": True,
-            "image_path_prefix": "./images/"
+            "image_path_prefix": "./images/",
+            "upload_images": True
         },
         "s3": {
             "enabled": False,

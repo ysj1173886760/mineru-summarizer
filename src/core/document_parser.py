@@ -28,8 +28,10 @@ class DocumentChunk:
 class DocumentParser:
     """统一的文档解析器 - 基于V3的markdown header分割"""
 
-    def __init__(self, max_tokens_per_chapter: int = 8000):
+    def __init__(self, max_tokens_per_chapter: int = 8000, chunk_strategy: str = "split_by_chapter", auto_merge_threshold: int = 8000):
         self.max_tokens_per_chapter = max_tokens_per_chapter
+        self.chunk_strategy = chunk_strategy
+        self.auto_merge_threshold = auto_merge_threshold
 
         # 只按一级标题分割（V3特性）
         self.headers_to_split_on = [
@@ -92,6 +94,13 @@ class DocumentParser:
         if skipped_chapters:
             print(f"🚫 跳过的章节: {', '.join(skipped_chapters)}")
 
+        # 根据分块策略处理章节
+        if self.chunk_strategy == "auto":
+            final_chunks = self._auto_chunk_strategy(final_chunks)
+        elif self.chunk_strategy == "split_by_size":
+            final_chunks = self._split_by_size_strategy(final_chunks)
+        # split_by_chapter策略不需要额外处理，保持原有章节结构
+
         return final_chunks
 
     def _should_skip_chapter(self, chapter_title: str) -> bool:
@@ -118,6 +127,128 @@ class DocumentParser:
             return True
 
         return False
+
+    def _auto_chunk_strategy(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
+        """自动选择分块策略"""
+        if not chunks:
+            return chunks
+        
+        # 计算总token数
+        total_tokens = sum(chunk.token_count for chunk in chunks)
+        
+        print(f"🤖 智能分块策略")
+        print(f"   文档总token数: {total_tokens:,}")
+        print(f"   自动合并阈值: {self.auto_merge_threshold:,}")
+        print(f"   章节数: {len(chunks)}")
+        
+        # 如果总token数小于等于阈值，使用split_by_size策略
+        if total_tokens <= self.auto_merge_threshold:
+            print(f"   ✅ 文档较小，使用按大小分割策略 (尽量合并)")
+            return self._split_by_size_strategy(chunks)
+        else:
+            print(f"   📋 文档较大，使用按章节分割策略 (保持章节结构)")
+            # 文档较大，保持原有章节结构
+            return chunks
+
+    def _split_by_size_strategy(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
+        """按大小分割策略：尽量将章节合并到一个分片内，只要不超过max_tokens_per_chapter"""
+        if not chunks:
+            return chunks
+        
+        merged_chunks = []
+        current_group = []
+        current_tokens = 0
+        
+        print(f"📏 按大小分割策略，原章节数: {len(chunks)}")
+        
+        for chunk in chunks:
+            # 如果当前组为空，或者加入当前章节不会超过限制，则加入
+            if not current_group or (current_tokens + chunk.token_count <= self.max_tokens_per_chapter):
+                current_group.append(chunk)
+                current_tokens += chunk.token_count
+            else:
+                # 当前组已满，保存当前组并开始新组
+                if current_group:
+                    merged_chunk = self._create_merged_chunk(current_group)
+                    merged_chunks.append(merged_chunk)
+                
+                # 开始新组
+                current_group = [chunk]
+                current_tokens = chunk.token_count
+        
+        # 处理最后一组
+        if current_group:
+            merged_chunk = self._create_merged_chunk(current_group)
+            merged_chunks.append(merged_chunk)
+        
+        print(f"📏 按大小分割完成，最终分片数: {len(merged_chunks)}")
+        
+        # 打印分割统计
+        for i, merged_chunk in enumerate(merged_chunks):
+            if merged_chunk.metadata.get('merged', False):
+                original_count = len(merged_chunk.metadata.get('original_chunks', []))
+                print(f"   分片 {i+1}: {original_count} 个原章节，共 {merged_chunk.token_count:,} tokens")
+            else:
+                print(f"   分片 {i+1}: 1 个原章节，共 {merged_chunk.token_count:,} tokens")
+        
+        return merged_chunks
+    
+    def _create_merged_chunk(self, chunks: List[DocumentChunk]) -> DocumentChunk:
+        """创建合并后的章节块"""
+        if len(chunks) == 1:
+            # 只有一个章节，直接返回
+            return chunks[0]
+        
+        # 合并多个章节
+        merged_content = []
+        merged_sub_sections = []
+        original_chunks_info = []
+        
+        for chunk in chunks:
+            merged_content.append(chunk.content)
+            merged_sub_sections.extend(chunk.sub_sections)
+            original_chunks_info.append({
+                'id': chunk.id,
+                'title': chunk.chapter_title,
+                'token_count': chunk.token_count
+            })
+        
+        # 生成合并后的标题
+        first_title = chunks[0].chapter_title
+        last_title = chunks[-1].chapter_title
+        if len(chunks) == 2:
+            merged_title = f"{first_title} & {last_title}"
+        else:
+            merged_title = f"{first_title} ~ {last_title} (共{len(chunks)}章)"
+        
+        # 生成新的ID
+        first_id = chunks[0].id
+        last_id = chunks[-1].id
+        merged_id = f"{first_id}_to_{last_id}"
+        
+        # 合并内容，用分隔符连接
+        separator = "\n\n" + "="*50 + "\n\n"
+        final_content = separator.join(merged_content)
+        
+        # 计算合并后的token数
+        total_tokens = sum(chunk.token_count for chunk in chunks)
+        
+        # 创建合并的元数据
+        merged_metadata = {
+            'merged': True,
+            'original_chunks': original_chunks_info,
+            'chunk_count': len(chunks)
+        }
+        
+        return DocumentChunk(
+            id=merged_id,
+            content=final_content,
+            metadata=merged_metadata,
+            token_count=total_tokens,
+            chapter_title=merged_title,
+            chapter_level=1,  # 合并后的章节统一为1级
+            sub_sections=merged_sub_sections
+        )
 
     def _split_large_chapter(self, chunk, chapter_index: int) -> List[DocumentChunk]:
         """分割过大的章节，保持原始顺序"""

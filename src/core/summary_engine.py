@@ -57,6 +57,13 @@ class SummaryEngine:
         print(f"📊 压缩级别: {compression_level}%")
         print(f"📄 输出路径: {output_path}")
         print(f"📚 最大章节token数: {self.config.processing.max_tokens_per_chapter:,}")
+        strategy_names = {
+            "auto": f"智能模式 (阈值: {self.config.processing.auto_merge_threshold:,} tokens)",
+            "split_by_chapter": "按章节分割 (每章节一个分片)",
+            "split_by_size": "按大小分割 (尽量合并到一个分片)"
+        }
+        strategy_display = strategy_names.get(self.config.processing.chunk_strategy, self.config.processing.chunk_strategy)
+        print(f"📚 分块策略: {strategy_display}")
         print(f"🤖 后端: {self.config.backend.type}")
         print(f"✨ 二次打磨: {'启用' if self.config.polish.enabled else '禁用'}")
         print(f"💾 检查点: {'启用' if self.config.processing.enable_checkpoint else '禁用'}")
@@ -69,7 +76,11 @@ class SummaryEngine:
         if not full_md_path.exists():
             raise FileNotFoundError(f"未找到full.md文件: {full_md_path}")
 
-        parser = DocumentParser(self.config.processing.max_tokens_per_chapter)
+        parser = DocumentParser(
+            self.config.processing.max_tokens_per_chapter,
+            self.config.processing.chunk_strategy,
+            self.config.processing.auto_merge_threshold
+        )
         chapter_chunks = parser.parse_markdown_file(full_md_path)
 
         print(f"解析完成: {len(chapter_chunks)} 个大章节")
@@ -545,15 +556,8 @@ class SummaryEngine:
 3. 保持学术写作的严谨性和专业性
 4. 对于包含多个子章节的内容，请按逻辑顺序组织总结
 5. 如果原文中有图片链接（格式如![](images/xxx.jpg)），请中保留这些图片链接，如果文中有对图片的相关描述可以简要提及。不要输出任何原文中没有的图片链接
-7. 专有技术名词保持英文原文，不要翻译，包括但不限于：
-   - Graph Neural Networks (GNNs), Graph Foundation Models (GFMs), Transformer
-   - Graph Attention Networks (GAT), GraphSAGE, Message Passing, Node Embedding
-   - Graph Convolutional Networks (GCN), Self-supervised Learning, Pre-training
-   - Fine-tuning, In-context Learning, Few-shot Learning, Zero-shot Learning
-   - Knowledge Graph, Heterogeneous Graph, Homogeneous Graph, Graph Isomorphism
-   - Graph Pooling, Graph Classification, Node Classification, Link Prediction
-   - Graph Generation, Graph Anomaly Detection, Contrastive Learning
-   - Multi-modal Learning, Cross-domain Transfer, Domain Adaptation
+7. 专有技术名词保持英文原文，不要翻译
+8. 如果文章内容较少/没有内容，不要捏造内容
 
 原文内容:
 {chunk.content}
