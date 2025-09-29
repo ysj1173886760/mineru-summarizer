@@ -11,8 +11,11 @@ import argparse
 import subprocess
 import tempfile
 import shutil
+import re
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 # 导入MinerU客户端
 from mineru.client import MinerUClient
@@ -124,6 +127,9 @@ class PDFSummarizer:
                 return False
             
             print(f"✅ MinerU解析完成，生成文件: {full_md_path}")
+
+            # 标准化图片文件名并更新引用
+            self._normalize_image_filenames(mineru_output_dir, full_md_path)
             
             print("\n" + "=" * 60)
             print("第二步: 使用mineru-summarizer生成总结")
@@ -158,8 +164,98 @@ class PDFSummarizer:
                     print(f"🧹 已清理临时目录: {temp_dir_path}")
                 except Exception as e:
                     print(f"⚠️ 清理临时目录失败: {e}")
-            elif keep_temp:
-                print(f"📁 临时文件保留在: {temp_dir_path}")
+
+    def _normalize_image_filenames(self, output_dir: Path, markdown_path: Path) -> None:
+        """重命名图片为顺序编号并更新Markdown中的引用。"""
+
+        images_dir = output_dir / "images"
+        if not images_dir.exists() or not markdown_path.exists():
+            return
+
+        content = markdown_path.read_text(encoding="utf-8")
+
+        pattern = re.compile(r"!\[[^\]]*\]\(([^)]+)\)|<img[^>]+src=\"([^\"]+)\"|<img[^>]+src='([^']+)'", re.IGNORECASE)
+
+        image_map: OrderedDict[str, dict] = OrderedDict()
+
+        for match in pattern.finditer(content):
+            raw_path = next((group for group in match.groups() if group), None)
+            if not raw_path:
+                continue
+            raw_path = raw_path.strip()
+
+            base_path = raw_path.split("?")[0].split("#")[0]
+            cleaned = base_path.lstrip("./")
+            cleaned = cleaned.replace("\\", "/")
+            if cleaned.startswith("/"):
+                cleaned = cleaned.lstrip("/")
+
+            if cleaned.lower().startswith("http://") or cleaned.lower().startswith("https://") or cleaned.lower().startswith("data:"):
+                continue
+
+            rel_path = Path(cleaned)
+            if not rel_path.parts or rel_path.parts[0] != "images":
+                continue
+
+            image_file = (output_dir / rel_path).resolve()
+            try:
+                image_file.relative_to(images_dir.resolve())
+            except ValueError:
+                continue
+
+            if not image_file.exists():
+                continue
+
+            key = rel_path.as_posix()
+            entry = image_map.get(key)
+            if entry is None:
+                suffix = image_file.suffix or ".png"
+                new_rel = Path("images") / f"{len(image_map) + 1}{suffix}"
+                image_map[key] = {
+                    "file_path": image_file,
+                    "new_rel": new_rel.as_posix(),
+                    "raw_paths": {raw_path},
+                }
+                entry = image_map[key]
+            else:
+                entry["raw_paths"].add(raw_path)
+
+        if not image_map:
+            return
+
+        # 防止命名冲突，先临时改名
+        for entry in image_map.values():
+            file_path: Path = entry["file_path"]
+            if not file_path.exists():
+                continue
+            temp_name = file_path.with_name(f"__tmp_{uuid4().hex}{file_path.suffix}")
+            while temp_name.exists():
+                temp_name = file_path.with_name(f"__tmp_{uuid4().hex}{file_path.suffix}")
+            file_path.rename(temp_name)
+            entry["temp_path"] = temp_name
+
+        # 重命名为目标文件
+        for entry in image_map.values():
+            temp_path: Path = entry.get("temp_path")
+            if temp_path is None or not temp_path.exists():
+                continue
+            new_rel = Path(entry["new_rel"])
+            target_path = output_dir / new_rel
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                target_path.unlink()
+            temp_path.rename(target_path)
+            entry["file_path"] = target_path
+
+        # 更新Markdown引用
+        updated_content = content
+        for entry in image_map.values():
+            new_rel: str = entry["new_rel"]
+            raw_paths = entry["raw_paths"]
+            for raw in sorted(raw_paths, key=len, reverse=True):
+                updated_content = updated_content.replace(raw, new_rel)
+
+        markdown_path.write_text(updated_content, encoding="utf-8")
     
     def _run_summarizer(
         self,

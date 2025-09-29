@@ -186,6 +186,10 @@ def load_unified_config(config_path: Optional[Path] = None) -> UnifiedConfig:
         70: {
             "strategy": "detailed_summary",
             "prompt_template": "请对以下英文学术文本进行详细的中文总结，保留70%的信息量，包含主要论点、方法和结果。要求：直接输出总结内容，不要添加关于总结过程的说明性文字："
+        },
+        100: {
+            "strategy": "full_translation",
+            "prompt_template": "请将以下英文学术文本完整翻译为中文，不遗漏任何信息，保持段落结构和编号，与原文一一对应。专有技术名词保持英文原文。直接输出翻译内容，不要添加额外说明："
         }
     })
     
