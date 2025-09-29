@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import re
-from datetime import datetime
 from ..core.checkpoint_manager import SummaryResult
 from ..config.unified_config import OutputConfig
 
@@ -21,100 +20,9 @@ class MarkdownFormatterV2:
     ) -> str:
         """格式化总结为Markdown"""
 
-        # 构建文档头部
-        header = self._build_header(original_title, compression_level, stats)
-
-        # 生成目录
-        toc = ""
-        if self.config.include_toc:
-            toc = self._generate_toc(summaries)
-
-        # 格式化内容
+        # 仅保留正文内容，去除生成信息、目录与统计信息
         content = self._format_content(summaries)
-
-        # 构建完整文档
-        full_document = []
-
-        if header:
-            full_document.append(header)
-
-        if toc:
-            full_document.append(toc)
-
-        if content:
-            full_document.append(content)
-
-        # 添加文档尾部
-        footer = self._build_footer(stats)
-        if footer:
-            full_document.append(footer)
-
-        return "\n\n".join(full_document)
-
-    def _build_header(
-        self,
-        original_title: str,
-        compression_level: int,
-        stats: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """构建文档头部"""
-        header_parts = []
-
-        # 主标题
-        if original_title:
-            title = f"{original_title} - 中文总结 ({compression_level}%)"
-        else:
-            title = f"学术论文中文总结 ({compression_level}%)"
-
-        header_parts.append(f"# {title}")
-
-        # 生成信息
-        generation_info = [
-            f"- **压缩级别**: {compression_level}%",
-            f"- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"- **工具**: MinerU内容总结器 V2",
-        ]
-
-        if stats:
-            generation_info.extend(
-                [
-                    f"- **原始块数**: {stats.get('total_chunks', 'N/A')}",
-                    f"- **处理章节数**: {stats.get('sections_processed', 'N/A')}",
-                    f"- **压缩比**: {stats.get('overall_compression_ratio', 0):.2%}",
-                ]
-            )
-
-        header_parts.append("## 生成信息\n" + "\n".join(generation_info))
-
-        return "\n\n".join(header_parts)
-
-    def _generate_toc(self, summaries: List[SummaryResult]) -> str:
-        """生成目录"""
-        toc_parts = ["## 目录"]
-
-        # 收集章节并保持原始顺序
-        unique_sections = []
-        seen = set()
-
-        # 首先按chunk_id排序确保原始顺序
-        sorted_summaries = sorted(summaries, key=lambda x: x.chunk_id)
-
-        for summary in sorted_summaries:
-            section_tuple = (summary.section_level, summary.section_title)
-            if section_tuple not in seen:
-                seen.add(section_tuple)
-                unique_sections.append(section_tuple)
-
-        # 使用原始顺序，不进行额外排序
-        sorted_sections = unique_sections
-
-        # 生成目录项
-        for level, title in sorted_sections:
-            indent = "  " * (level - 1) if level > 0 else ""
-            anchor = self._create_anchor(title)
-            toc_parts.append(f"{indent}- [{title}](#{anchor})")
-
-        return "\n".join(toc_parts)
+        return content.strip()
 
     def _merge_section_summaries_ordered(
         self, summaries: List[SummaryResult]
@@ -222,38 +130,6 @@ class MarkdownFormatterV2:
                 cleaned_lines.append(line)
 
         return "\n".join(cleaned_lines)
-
-    def _create_anchor(self, title: str) -> str:
-        """创建锚点链接"""
-        # 移除特殊字符，保留中文、英文、数字
-        anchor = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", title)
-        # 替换空格为连字符
-        anchor = re.sub(r"\s+", "-", anchor.strip())
-        # 转为小写（英文部分）
-        return anchor.lower()
-
-    def _build_footer(self, stats: Optional[Dict[str, Any]] = None) -> str:
-        """构建文档尾部"""
-        if not stats:
-            return ""
-
-        footer_parts = ["---", "## 统计信息"]
-
-        stat_items = [
-            f"- **总处理块数**: {stats.get('total_chunks', 'N/A')}",
-            f"- **原始总token数**: {stats.get('total_original_tokens', 'N/A'):,}",
-            f"- **总结总token数**: {stats.get('total_summary_tokens', 'N/A'):,}",
-            f"- **整体压缩比**: {stats.get('overall_compression_ratio', 0):.2%}",
-            f"- **平均压缩比**: {stats.get('average_compression_ratio', 0):.2%}",
-            f"- **处理章节数**: {stats.get('sections_processed', 'N/A')}",
-        ]
-
-        footer_parts.append("\n".join(stat_items))
-
-        # 添加生成说明
-        footer_parts.append("\n*此文档由MinerU内容总结器V2自动生成，基于Langchain Markdown分割技术。*")
-
-        return "\n\n".join(footer_parts)
 
     def save_to_file(self, content: str, output_path: Path) -> None:
         """保存到文件"""

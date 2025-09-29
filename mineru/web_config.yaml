@@ -1,0 +1,18 @@
+# Web 服务配置
+uploads_dir: var/uploads
+results_dir: var/results
+logs_dir: var/logs
+database_path: var/web_tasks.db
+poll_interval_seconds: 5
+worker_interval_seconds: 2
+worker_concurrency: 1
+max_file_mb: 50
+base_config_path: mineru-config.yaml
+default_compression: 50
+mineru_server: http://10.37.112.215:5000
+mineru_lang: ch
+mineru_backend: pipeline
+mineru_method: auto
+formula_enable: true
+table_enable: true
+keep_temp_files: false

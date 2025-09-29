@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>MinerU Summarizer Web</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --primary: #2563eb;
+        --danger: #dc2626;
+        --success: #16a34a;
+        font-family: "SF Pro", "Segoe UI", Roboto, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #0f172a;
+        color: #e2e8f0;
+        min-height: 100vh;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 28px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      h1 span {
+        display: inline-flex;
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        align-items: center;
+        justify-content: center;
+        background: rgba(37,99,235,0.2);
+      }
+      form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 24px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        font-size: 14px;
+        gap: 6px;
+      }
+      input[type="file"],
+      select {
+        font-size: 14px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(148, 163, 184, 0.4);
+        background: rgba(15, 23, 42, 0.3);
+        color: inherit;
+      }
+      button {
+        background: var(--primary);
+        border: none;
+        color: white;
+        padding: 10px 18px;
+        border-radius: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+      button[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.retry {
+        background: rgba(148, 163, 184, 0.15);
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        padding: 6px 12px;
+        font-size: 13px;
+      }
+      button.retry:hover:not([disabled]) {
+        background: rgba(148, 163, 184, 0.25);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: rgba(15, 23, 42, 0.6);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      th,
+      td {
+        padding: 12px 14px;
+        font-size: 14px;
+        text-align: left;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      }
+      th {
+        background: rgba(15, 23, 42, 0.8);
+        font-weight: 600;
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .status.pending {
+        background: rgba(148, 163, 184, 0.2);
+      }
+      .status.running {
+        background: rgba(59, 130, 246, 0.18);
+        color: #60a5fa;
+      }
+      .status.succeeded {
+        background: rgba(34, 197, 94, 0.18);
+        color: #4ade80;
+      }
+      .status.failed {
+        background: rgba(248, 113, 113, 0.18);
+        color: #fca5a5;
+      }
+      .message {
+        margin-top: 8px;
+        font-size: 13px;
+      }
+      .message.error {
+        color: #fca5a5;
+      }
+      .empty {
+        padding: 28px;
+        text-align: center;
+        color: rgba(148, 163, 184, 0.7);
+        font-size: 14px;
+      }
+      a.download {
+        color: #93c5fd;
+        text-decoration: none;
+      }
+      a.download:hover {
+        text-decoration: underline;
+      }
+      .error-hint {
+        display: inline-block;
+        margin-left: 8px;
+        color: #f87171;
+        font-size: 12px;
+        cursor: help;
+      }
+      @media (max-width: 640px) {
+        th:nth-child(4),
+        td:nth-child(4),
+        th:nth-child(5),
+        td:nth-child(5) {
+          display: none;
+        }
+        form {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1><span>📄</span>MinerU Summarizer Web</h1>
+      <p style="margin-top:-12px;color:rgba(148,163,184,0.8);font-size:14px;">
+        上传 PDF 后任务会自动排队处理。完成后可下载 Markdown 总结。
+      </p>
+      <form id="upload-form">
+        <label>
+          选择 PDF
+          <input type="file" id="file-input" name="file" accept="application/pdf" required />
+        </label>
+        <label>
+          压缩比例
+          <select id="compression" name="compression">
+            {% for option in compression_options %}
+            <option value="{{ option }}" {% if option == default_compression %}selected{% endif %}>{{ option }}%</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" id="submit-btn">开始上传</button>
+        <div style="font-size:12px;color:rgba(148,163,184,0.7);">
+          单个文件最大 {{ max_file_mb }} MB
+        </div>
+      </form>
+      <div id="message" class="message"></div>
+
+      <table aria-label="任务列表">
+        <thead>
+          <tr>
+            <th>文件名</th>
+            <th>压缩</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>耗时</th>
+            <th style="width:120px;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body">
+          <tr class="empty">
+            <td colspan="6">暂无任务，上传一个 PDF 即可开始。</td>
+          </tr>
+        </tbody>
+      </table>
+    </main>
+    <script>
+      const pollIntervalMs = {{ (poll_interval * 1000) | int }};
+      const tasksBody = document.getElementById('tasks-body');
+      const messageBox = document.getElementById('message');
+      const submitBtn = document.getElementById('submit-btn');
+      const form = document.getElementById('upload-form');
+      let pollTimer = null;
+
+      function showMessage(text, type = 'info') {
+        if (!text) {
+          messageBox.textContent = '';
+          messageBox.className = 'message';
+          return;
+        }
+        messageBox.textContent = text;
+        messageBox.className = `message ${type === 'error' ? 'error' : ''}`;
+      }
+
+      function formatDate(value) {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString('zh-CN', { hour12: false });
+      }
+
+      function formatDuration(record) {
+        if (!record.started_at) return '-';
+        const start = new Date(record.started_at);
+        const end = record.finished_at ? new Date(record.finished_at) : new Date();
+        const diff = Math.max(0, end.getTime() - start.getTime());
+        const seconds = Math.floor(diff / 1000);
+        if (seconds < 60) return `${seconds}s`;
+        const minutes = Math.floor(seconds / 60);
+        const remain = seconds % 60;
+        return `${minutes}分${remain}s`;
+      }
+
+      function statusBadge(status) {
+        const map = {
+          PENDING: { text: '排队中', cls: 'pending' },
+          RUNNING: { text: '处理中', cls: 'running' },
+          SUCCEEDED: { text: '已完成', cls: 'succeeded' },
+          FAILED: { text: '失败', cls: 'failed' }
+        };
+        const info = map[status] || { text: status, cls: '' };
+        return `<span class="status ${info.cls}">${info.text}</span>`;
+      }
+
+      function escapeHtml(value) {
+        if (value == null) return '';
+        const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        return String(value).replace(/[&<>"']/g, (char) => map[char] || char);
+      }
+
+      function renderTasks(tasks) {
+        if (!Array.isArray(tasks) || tasks.length === 0) {
+          tasksBody.innerHTML = '<tr class="empty"><td colspan="6">暂无任务，上传一个 PDF 即可开始。</td></tr>';
+          return;
+        }
+        const rows = tasks.map(task => {
+          const safeName = escapeHtml(task.filename);
+          const actions = task.download_url
+            ? `<a class="download" href="${task.download_url}" download>下载 Markdown</a>`
+            : task.status === 'FAILED'
+              ? `<button class="retry" data-task="${task.id}">重试</button>` +
+                (task.error_message ? `<span class="error-hint" title="${escapeHtml(task.error_message)}">查看错误</span>` : '')
+              : '-';
+          return `
+            <tr>
+              <td title="${safeName}">${safeName}</td>
+              <td>${task.compression}%</td>
+              <td>${statusBadge(task.status)}</td>
+              <td>${formatDate(task.created_at)}</td>
+              <td>${formatDuration(task)}</td>
+              <td>${actions}</td>
+            </tr>
+          `;
+        });
+        tasksBody.innerHTML = rows.join('');
+      }
+
+      async function fetchTasks() {
+        try {
+          const response = await fetch('/api/tasks');
+          if (!response.ok) throw new Error(await response.text());
+          const data = await response.json();
+          renderTasks(data);
+        } catch (error) {
+          console.error('获取任务列表失败', error);
+          showMessage('获取任务列表失败，请稍后重试。', 'error');
+        }
+      }
+
+      async function uploadTask(event) {
+        event.preventDefault();
+        showMessage('');
+        const fileInput = document.getElementById('file-input');
+        if (!fileInput.files.length) {
+          showMessage('请选择要上传的 PDF 文件。', 'error');
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('compression', document.getElementById('compression').value);
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = '上传中…';
+
+        try {
+          const response = await fetch('/api/tasks', {
+            method: 'POST',
+            body: formData
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            const detail = payload.detail || '上传失败';
+            throw new Error(detail);
+          }
+          showMessage('上传成功，任务已加入队列。', 'success');
+          fileInput.value = '';
+          await fetchTasks();
+        } catch (error) {
+          console.error('上传失败', error);
+          showMessage(error.message || '上传失败，请稍后重试。', 'error');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = '开始上传';
+        }
+      }
+
+      function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(fetchTasks, pollIntervalMs);
+      }
+
+      async function retryTask(taskId, button) {
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '重试中…';
+        showMessage('');
+        try {
+          const response = await fetch(`/api/tasks/${taskId}/retry`, { method: 'POST' });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            const detail = payload.detail || '重试失败';
+            throw new Error(detail);
+          }
+          showMessage('任务已重新加入队列。', 'success');
+          await fetchTasks();
+        } catch (error) {
+          console.error('重试任务失败', error);
+          showMessage(error.message || '重试任务失败。', 'error');
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+
+      tasksBody.addEventListener('click', (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.matches('button.retry')) {
+          const taskId = target.dataset.task;
+          if (taskId) {
+            retryTask(taskId, target);
+          }
+        }
+      });
+
+      form.addEventListener('submit', uploadTask);
+      fetchTasks();
+      startPolling();
+    </script>
+  </body>
+</html>
